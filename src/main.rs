@@ -4,16 +4,15 @@ use opencv::{
     objdetect,
     imgproc,
     core,
-    types,
     videoio,
     highgui
 };
-use opencv::core::Size;
+use opencv::core::{Rect, Size, Vector};
 
 // Note, the namespace of OpenCV is changed (to better or worse). It is no longer one enormous.
 fn main() -> Result<()> { // Note, this is anyhow::Result
     // Open a GUI window
-    highgui::named_window("ACamOperator", highgui::WINDOW_FULLSCREEN)?;
+    highgui::named_window("ACamOperator", highgui::WINDOW_NORMAL)?;
     // Open the web-camera (assuming you have one)
     let mut cam = videoio::VideoCapture::new(0, videoio::CAP_ANY)?;
     let xml = "C:\\tools\\opencv\\build\\etc\\haarcascades\\haarcascade_frontalface_default.xml";
@@ -25,7 +24,7 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
         let mut cam_raw = Mat::default();
         cam.read(&mut cam_raw)?;
         imgproc::cvt_color(&cam_raw, &mut frame, imgproc::COLOR_RGB2GRAY, 0)?;
-        let mut faces = types::VectorOfRect::new();
+        let mut faces: Vector<Rect> = Vector::new();
         face_detector.detect_multi_scale(
             &frame,
             &mut faces,
