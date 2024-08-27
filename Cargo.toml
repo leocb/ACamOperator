@@ -5,4 +5,4 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.86"
-opencv = "0.92.2"
+opencv = "0.92.2" # Open CV 4.10
