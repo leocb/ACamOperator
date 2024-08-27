@@ -1,14 +1,15 @@
-use anyhow::{Error, Result}; // Automatically handle the error types
-use opencv::{
-    prelude::*,
-    imgproc,
-    core,
-    videoio,
-    highgui,
-};
-use opencv::core::{Scalar, Size, TickMeter, Vector};
+use anyhow::{Error, Result};
+use opencv::core::{Scalar, Size, TickMeter};
 use opencv::objdetect::FaceDetectorYN;
 use opencv::videoio::{CAP_PROP_FRAME_HEIGHT, CAP_PROP_FRAME_WIDTH};
+// Automatically handle the error types
+use opencv::{
+    core,
+    highgui,
+    imgproc,
+    prelude::*,
+    videoio,
+};
 
 
 fn visualize(input: &mut Mat, faces: &Mat, fps: f64, thickness: i32) -> Result<()> {
@@ -20,7 +21,7 @@ fn visualize(input: &mut Mat, faces: &Mat, fps: f64, thickness: i32) -> Result<(
         let w = *faces.at_2d::<f32>(i, 2)?;
         let h = *faces.at_2d::<f32>(i, 3)?;
         let score = *faces.at_2d::<f32>(i, 14)?;
-        let rect = core::Rect2f::new(x,y,w,h).to::<i32>().unwrap();
+        let rect = core::Rect2f::new(x, y, w, h).to::<i32>().unwrap();
         imgproc::rectangle(input, rect, (0., 255., 0.).into(), thickness, imgproc::LINE_8, 0)?;
 
         // info text
@@ -64,7 +65,7 @@ fn visualize_draw_point(input: &mut Mat, faces: &Mat, thickness: i32, i: i32, co
         input,
         core::Point2f::new(
             *faces.at_2d::<f32>(i, landmark_offset)?,
-            *faces.at_2d::<f32>(i, landmark_offset + 1)?
+            *faces.at_2d::<f32>(i, landmark_offset + 1)?,
         ).to::<i32>().unwrap(),
         2,
         color,
@@ -106,7 +107,6 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
         0)?;
 
 
-
     loop {
         tm.start()?;
         // Read the camera
@@ -117,7 +117,7 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
 
         // Detect faces
         let mut faces = Mat::default();
-        face_detector.detect(&cam_raw,&mut faces)?;
+        face_detector.detect(&cam_raw, &mut faces)?;
 
         let mut output_image = cam_raw.clone();
         tm.stop()?;
