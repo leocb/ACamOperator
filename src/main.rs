@@ -105,14 +105,15 @@ impl Point {
 // Note, the namespace of OpenCV is changed (to better or worse). It is no longer one enormous.
 fn main() -> Result<()> { // Note, this is anyhow::Result
 
-    // Webcam/Input resolution
+    // Webcam ID / Resolution
+    let cam_id = 2;
     let width = 1280.;
     let height = 720.;
 
     // Open a GUI window
     highgui::named_window("ACamOperator", highgui::WINDOW_NORMAL)?;
     // Open the web-camera (assuming you have one)
-    let mut cam = videoio::VideoCapture::new(2, videoio::CAP_ANY)?;
+    let mut cam = videoio::VideoCapture::new(cam_id, videoio::CAP_ANY)?;
     cam.set(CAP_PROP_FRAME_WIDTH, width)?;
     cam.set(CAP_PROP_FRAME_HEIGHT, height)?;
 
@@ -258,14 +259,13 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
         fps.stop()?;
 
         // Visualize
-        let mut output_image = cam_raw.clone();
-        visualize(&mut output_image, &faces, &matches, fps.get_fps()?, 2)?;
+        visualize(&mut cam_raw, &faces, &matches, fps.get_fps()?, 2)?;
 
         // reset mouse click detection
         instant_click = false;
 
         // display in the window
-        highgui::imshow("ACamOperator", &output_image)?;
+        highgui::imshow("ACamOperator", &cam_raw)?;
 
         // quit with "q"
         let key = highgui::wait_key(1)?;
