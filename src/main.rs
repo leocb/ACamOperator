@@ -268,7 +268,7 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
         highgui::imshow("ACamOperator", &output_image)?;
 
         // quit with "q"
-        let key = highgui::wait_key(10)?;
+        let key = highgui::wait_key(1)?;
         if key == 113 { // quit with q
             break;
         }
