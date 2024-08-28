@@ -53,9 +53,6 @@ fn visualize(input: &mut Mat, faces: &Mat, matches: &Vec<usize>, fps: f64, trail
         if match_id != 99 {
             let trail_vec = trails[match_id].to_vec();
             for t in 1..trail_vec.len() {
-                if trail_vec[t - 1].x == -1 || trail_vec[t].x == -1 {
-                    continue;
-                }
                 line(input, trail_vec[t], trail_vec[t - 1], (0., 0., 255.).into(), thickness, LINE_8, 0)?;
             }
 
@@ -303,7 +300,7 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
             if instant_click && is_inside {
                 saved_faces_features.push(features.try_clone()?);
                 let mut new_trail_buffer = AllocRingBuffer::new(30);
-                new_trail_buffer.fill(Point::new(-1, -1));
+                new_trail_buffer.fill(Point::new(midx, midy));
                 trails.push(new_trail_buffer);
                 instant_click = false;
             }
