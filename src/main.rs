@@ -1,7 +1,7 @@
 use anyhow::{Error, Result};
-use opencv::core::{Scalar, Size, TickMeter, Vector};
+use opencv::core::{Point, Scalar, Size, TickMeter, Vector};
 use opencv::highgui::MouseEventTypes::{EVENT_LBUTTONDOWN, EVENT_LBUTTONUP};
-use opencv::imgproc::INTER_AREA;
+use opencv::imgproc::{line, INTER_AREA, LINE_8};
 use opencv::objdetect::{FaceDetectorYN, FaceRecognizerSF, FaceRecognizerSF_DisType};
 use opencv::videoio::{CAP_PROP_FRAME_HEIGHT, CAP_PROP_FRAME_WIDTH};
 // Automatically handle the error types
@@ -12,12 +12,16 @@ use opencv::{
     prelude::*,
     videoio,
 };
+use ringbuffer::{AllocRingBuffer, RingBuffer};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-fn visualize(input: &mut Mat, faces: &Mat, matches: &Vec<usize>, fps: f64, thickness: i32) -> Result<()> {
+fn visualize(input: &mut Mat, faces: &Mat, matches: &Vec<usize>, fps: f64, trails: &Vec<AllocRingBuffer<Point>>) -> Result<()> {
+    let thickness = 2;
     let fps_string = format!("FPS : {:.2}", fps);
     let mut j = 0;
+
+
     for i in 0..faces.rows() {
 
         // extract data
@@ -39,6 +43,17 @@ fn visualize(input: &mut Mat, faces: &Mat, matches: &Vec<usize>, fps: f64, thick
             imgproc::LINE_8,
             0)?;
 
+        // Movement trail
+        if match_id != 99 {
+            let trail_vec = trails[match_id as usize].to_vec();
+            for t in 1..trail_vec.len() {
+                if trail_vec[t - 1].x == -1 || trail_vec[t].x == -1 {
+                    continue;
+                }
+                line(input, trail_vec[t], trail_vec[t - 1], (0., 0., 255.).into(), thickness, LINE_8, 0)?;
+            }
+        }
+
         // info text
         imgproc::put_text(
             input,
@@ -54,11 +69,11 @@ fn visualize(input: &mut Mat, faces: &Mat, matches: &Vec<usize>, fps: f64, thick
         j += 1;
 
         // Draw landmarks
-        visualize_draw_point(input, &faces, thickness, (255., 0., 0.).into(), i, 4)?;
-        visualize_draw_point(input, &faces, thickness, (0., 0., 255.).into(), i, 6)?;
-        visualize_draw_point(input, &faces, thickness, (0., 255., 0.).into(), i, 8)?;
-        visualize_draw_point(input, &faces, thickness, (255., 0., 255.).into(), i, 10)?;
-        visualize_draw_point(input, &faces, thickness, (0., 255., 255.).into(), i, 12)?;
+        // visualize_draw_point(input, &faces, thickness, (255., 0., 0.).into(), i, 4)?;
+        // visualize_draw_point(input, &faces, thickness, (0., 0., 255.).into(), i, 6)?;
+        // visualize_draw_point(input, &faces, thickness, (0., 255., 0.).into(), i, 8)?;
+        // visualize_draw_point(input, &faces, thickness, (255., 0., 255.).into(), i, 10)?;
+        // visualize_draw_point(input, &faces, thickness, (0., 255., 255.).into(), i, 12)?;
     }
 
     // FPS
@@ -92,17 +107,6 @@ fn visualize_draw_point(input: &mut Mat, faces: &Mat, thickness: i32, color: Sca
     Ok(())
 }
 
-#[derive(Clone, Copy)]
-struct Point {
-    x: i32,
-    y: i32,
-}
-impl Point {
-    fn new(x: i32, y: i32) -> Self {
-        Self { x, y }
-    }
-}
-
 // Note, the namespace of OpenCV is changed (to better or worse). It is no longer one enormous.
 fn main() -> Result<()> { // Note, this is anyhow::Result
 
@@ -114,8 +118,12 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
     let scale = cam_width / yunet_width;
     let yunet_height = cam_height / scale;
 
+    // Visualization Trail
+    let mut trails: Vec<AllocRingBuffer<Point>> = Vec::new();
+
     // Open a GUI window
     highgui::named_window("ACamOperator", highgui::WINDOW_NORMAL)?;
+
     // Open the web-camera (assuming you have one)
     let mut cam = videoio::VideoCapture::new(cam_id, videoio::CAP_ANY)?;
     cam.set(CAP_PROP_FRAME_WIDTH, cam_width)?;
@@ -229,6 +237,8 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
             let y = *faces.at_2d::<f32>(i, 1)? as i32;
             let w = *faces.at_2d::<f32>(i, 2)? as i32;
             let h = *faces.at_2d::<f32>(i, 3)? as i32;
+            let midx = x + w / 2;
+            let midy = y + h / 2;
             if instant_click {
                 if mouse_pos.x >= x && mouse_pos.x <= x + w &&
                     mouse_pos.y >= y && mouse_pos.y <= y + h {
@@ -256,12 +266,16 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
                     // clicked again, remove from list
                     if instant_click && is_inside {
                         saved_faces_features.remove(j)?;
+                        trails.remove(j);
                         instant_click = false;
                         break;
                     }
 
                     // get the id of the face
                     matched = j;
+                    // trail
+                    trails[j].push(Point::new(midx, midy));
+
                     break;
                 }
             }
@@ -272,13 +286,16 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
             // Save features if clicked (follow on next frame)
             if instant_click && is_inside {
                 saved_faces_features.push(features.try_clone()?);
+                let mut new_trail_buffer = AllocRingBuffer::new(30);
+                new_trail_buffer.fill(Point::new(-1, -1));
+                trails.push(new_trail_buffer);
                 instant_click = false;
             }
         }
         fps.stop()?;
 
         // Visualize
-        visualize(&mut cam_raw, &faces, &matches, fps.get_fps()?, 2)?;
+        visualize(&mut cam_raw, &faces, &matches, fps.get_fps()?, &trails)?;
 
         // display in the window
         if cam_raw.rows() > 0 && cam_raw.cols() > 0 {

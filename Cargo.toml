@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.86"
 opencv = "0.92.2" # Open CV 4.10
+ringbuffer = "0.15.0"
