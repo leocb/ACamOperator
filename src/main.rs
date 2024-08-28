@@ -16,7 +16,7 @@ use ringbuffer::{AllocRingBuffer, RingBuffer};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-fn visualize(input: &mut Mat, faces: &Mat, matches: &Vec<usize>, fps: f64, trails: &Vec<AllocRingBuffer<Point>>, target: &Point) -> Result<()> {
+fn visualize(input: &mut Mat, faces: &Mat, matches: &Vec<usize>, fps: f64, trails: &Vec<AllocRingBuffer<Point>>, target: &Point, track_center: &Point) -> Result<()> {
     let thickness = 2;
     let fps_string = format!("FPS : {:.2}", fps);
     let mut j = 0;
@@ -27,6 +27,12 @@ fn visualize(input: &mut Mat, faces: &Mat, matches: &Vec<usize>, fps: f64, trail
 
     // target lines
     draw_crosshair_at_point(input, *target, (255., 0., 0.).into(), thickness)?;
+
+    // Track and distance to center
+    if track_center.x > 0 {
+        draw_point(input, *track_center, (0., 0., 255.).into(), 10)?;
+        line(input, *track_center, *target, (0., 255., 255.).into(), thickness, LINE_8, 0)?;
+    }
 
     for i in 0..faces.rows() {
 
@@ -71,11 +77,7 @@ fn visualize(input: &mut Mat, faces: &Mat, matches: &Vec<usize>, fps: f64, trail
         }
 
         // Draw landmarks
-        // visualize_draw_point(input, &faces, thickness, (255., 0., 0.).into(), i, 4)?;
-        // visualize_draw_point(input, &faces, thickness, (0., 0., 255.).into(), i, 6)?;
-        // visualize_draw_point(input, &faces, thickness, (0., 255., 0.).into(), i, 8)?;
-        // visualize_draw_point(input, &faces, thickness, (255., 0., 255.).into(), i, 10)?;
-        // visualize_draw_point(input, &faces, thickness, (0., 255., 255.).into(), i, 12)?;
+        //draw_face_landmarks(input, &faces, thickness, i)?;
 
         j += 1;
     }
@@ -95,25 +97,29 @@ fn visualize(input: &mut Mat, faces: &Mat, matches: &Vec<usize>, fps: f64, trail
     Ok(())
 }
 
+fn draw_face_landmarks(input: &mut Mat, faces: &&Mat, thickness: i32, i: i32) -> Result<(), Error> {
+    visualize_face_features_point(input, &faces, thickness, (255., 0., 0.).into(), i, 4)?;
+    visualize_face_features_point(input, &faces, thickness, (0., 0., 255.).into(), i, 6)?;
+    visualize_face_features_point(input, &faces, thickness, (0., 255., 0.).into(), i, 8)?;
+    visualize_face_features_point(input, &faces, thickness, (255., 0., 255.).into(), i, 10)?;
+    visualize_face_features_point(input, &faces, thickness, (0., 255., 255.).into(), i, 12)?;
+    Ok(())
+}
+
+fn visualize_face_features_point(input: &mut Mat, faces: &Mat, thickness: i32, color: Scalar, i: i32, landmark_offset: i32) -> Result<(), Error> {
+    draw_point(input, core::Point2f::new(*faces.at_2d::<f32>(i, landmark_offset)?, *faces.at_2d::<f32>(i, landmark_offset + 1)?,
+    ).to::<i32>().unwrap(), color, thickness)?;
+    Ok(())
+}
+
 fn draw_crosshair_at_point(input: &mut Mat, point: Point, color: Scalar, thickness: i32) -> Result<(), Error> {
     line(input, Point::new(point.x, 0), Point::new(point.x, input.size().unwrap().height), color, thickness, LINE_8, 0)?;
     line(input, Point::new(0, point.y), Point::new(input.size().unwrap().width, point.y), color, thickness, LINE_8, 0)?;
     Ok(())
 }
 
-fn visualize_draw_point(input: &mut Mat, faces: &Mat, thickness: i32, color: Scalar, i: i32, landmark_offset: i32) -> Result<(), Error> {
-    imgproc::circle(
-        input,
-        core::Point2f::new(
-            *faces.at_2d::<f32>(i, landmark_offset)?,
-            *faces.at_2d::<f32>(i, landmark_offset + 1)?,
-        ).to::<i32>().unwrap(),
-        2,
-        color,
-        thickness,
-        imgproc::LINE_8,
-        0,
-    )?;
+fn draw_point(input: &mut Mat, point: Point, color: Scalar, thickness: i32) -> Result<(), Error> {
+    imgproc::circle(input, point, 2, color, thickness, LINE_8, 0)?;
     Ok(())
 }
 
@@ -133,6 +139,7 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
 
     // Global Target
     let mut global_target = Point::new((cam_width / 2.) as i32, (cam_height / 3.5) as i32);
+    let mut tracked_center = Point::new(0, 0);
 
     // Open a GUI window
     highgui::named_window("ACamOperator", highgui::WINDOW_NORMAL)?;
@@ -144,7 +151,7 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
 
     // mouse events
     let mut mouse_pos = Point::new(-1, -1);
-    let mut instant_click = false;
+    let mut mouse_down = false;
 
     let default_mouse_event_data = (EVENT_LBUTTONDOWN, 0, 0, 0);
     let mouse_event_data = Arc::new(Mutex::new(default_mouse_event_data));
@@ -191,7 +198,11 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
     let l2norm_similar_thresh = 1.128;
 
     loop {
+        // keep counter up to date
         fps.reset()?;
+
+        // face id tracking deletion
+        let mut stop_tracking_id: usize = 99;
 
         // Mouse events
         let (mouse_event, mouse_x, mouse_y, _) = {
@@ -209,12 +220,12 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
 
         if mouse_event == EVENT_LBUTTONDOWN {
             mouse_pos = Point::new(mouse_x, mouse_y);
-            instant_click = true;
+            mouse_down = true;
         }
 
         if mouse_event == EVENT_LBUTTONUP {
             mouse_pos = Point::new(-1, -1);
-            instant_click = false;
+            mouse_down = false;
         }
 
         // Read the camera
@@ -242,20 +253,22 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
 
         // Recognize faces
         let mut matches: Vec<usize> = Vec::new();
+        let mut matches_total = 0;
+        tracked_center = Point::new(0, 0);
         for i in 0..faces.rows() {
 
             // click inside a box
-            let mut is_inside = false;
+            let mut is_mouse_inside = false;
             let x = *faces.at_2d::<f32>(i, 0)? as i32;
             let y = *faces.at_2d::<f32>(i, 1)? as i32;
             let w = *faces.at_2d::<f32>(i, 2)? as i32;
             let h = *faces.at_2d::<f32>(i, 3)? as i32;
-            let midx = x + w / 2;
-            let midy = y + h / 2;
-            if instant_click {
+            let mid_x = x + w / 2;
+            let mid_y = y + h / 2;
+            if mouse_down {
                 if mouse_pos.x >= x && mouse_pos.x <= x + w &&
                     mouse_pos.y >= y && mouse_pos.y <= y + h {
-                    is_inside = true;
+                    is_mouse_inside = true;
                 }
             }
 
@@ -269,46 +282,60 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
 
 
             // match
-            let mut matched: usize = 99;
+            let mut match_id: usize = 99;
             for (j, saved_feature) in saved_faces_features.iter().enumerate() {
                 let score_cos = face_recognizer.match_(&features, &saved_feature, FaceRecognizerSF_DisType::FR_COSINE.into())?;
                 let score_l2 = face_recognizer.match_(&features, &saved_feature, FaceRecognizerSF_DisType::FR_NORM_L2.into())?;
 
                 if score_cos > cosine_similar_thresh || score_l2 <= l2norm_similar_thresh {
 
-                    // clicked again, remove from list
-                    if instant_click && is_inside {
-                        saved_faces_features.remove(j)?;
-                        trails.remove(j);
-                        instant_click = false;
+                    // clicked on tracked face, mark it for stop tracking
+                    if mouse_down && is_mouse_inside {
+                        stop_tracking_id = j;
+                        mouse_down = false;
                         break;
                     }
 
                     // get the id of the face
-                    matched = j;
+                    match_id = j;
                     // trail
-                    trails[j].push(Point::new(midx, midy));
-
+                    trails[match_id].push(Point::new(mid_x, mid_y));
+                    // track center
+                    matches_total += 1;
+                    tracked_center.x += mid_x;
+                    tracked_center.y += mid_y;
                     break;
                 }
             }
 
-            matches.push(matched);
+            matches.push(match_id);
 
 
             // Save features if clicked (follow on next frame)
-            if instant_click && is_inside {
+            if mouse_down && is_mouse_inside {
                 saved_faces_features.push(features.try_clone()?);
                 let mut new_trail_buffer = AllocRingBuffer::new(30);
-                new_trail_buffer.fill(Point::new(midx, midy));
+                new_trail_buffer.fill(Point::new(mid_x, mid_y));
                 trails.push(new_trail_buffer);
-                instant_click = false;
+                mouse_down = false;
             }
         }
+
+        if matches_total > 0 {
+            tracked_center.x /= matches_total;
+            tracked_center.y /= matches_total;
+        }
+
         fps.stop()?;
 
         // Visualize
-        visualize(&mut cam_raw, &faces, &matches, fps.get_fps()?, &trails, &global_target)?;
+        visualize(&mut cam_raw, &faces, &matches, fps.get_fps()?, &trails, &global_target, &tracked_center)?;
+
+        // Remove tracking if necessary
+        if stop_tracking_id != 99 {
+            saved_faces_features.remove(stop_tracking_id)?;
+            trails.remove(stop_tracking_id);
+        }
 
         // display in the window
         if cam_raw.rows() > 0 && cam_raw.cols() > 0 {
@@ -316,8 +343,10 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
         }
 
         // keyboard handle.
-        // - Q: quit
+        // - Q: Quit
+        // - C: Clear all tracking
         // - Arrows: Reposition global target
+        // - Center (numpad 5) - reset target
         let key = highgui::wait_key(1)?;
         match key {
             50 => { // Down (numpad 2)
@@ -332,7 +361,14 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
             54 => { // Right (numpad 6)
                 global_target.x += 5;
             }
-            113 => { // quit with q
+            53 => { // Center (numpad 5) - reset target
+                global_target = Point::new((cam_width / 2.) as i32, (cam_height / 3.5) as i32);
+            }
+            99 => { // C - Clear all tracking
+                saved_faces_features.clear();
+                trails.clear();
+            }
+            113 => { // Q - Quit
                 break;
             }
             _ => ()
