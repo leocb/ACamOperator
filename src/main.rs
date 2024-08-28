@@ -16,11 +16,17 @@ use ringbuffer::{AllocRingBuffer, RingBuffer};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-fn visualize(input: &mut Mat, faces: &Mat, matches: &Vec<usize>, fps: f64, trails: &Vec<AllocRingBuffer<Point>>) -> Result<()> {
+fn visualize(input: &mut Mat, faces: &Mat, matches: &Vec<usize>, fps: f64, trails: &Vec<AllocRingBuffer<Point>>, target: &Point) -> Result<()> {
     let thickness = 2;
     let fps_string = format!("FPS : {:.2}", fps);
     let mut j = 0;
 
+    // rule of thirds
+    draw_crosshair_at_point(input, Point::new(input.size().unwrap().width / 3, input.size().unwrap().height / 3), (255., 255., 255.).into(), thickness)?;
+    draw_crosshair_at_point(input, Point::new(input.size().unwrap().width / 3 * 2, input.size().unwrap().height / 3 * 2), (255., 255., 255.).into(), thickness)?;
+
+    // target lines
+    draw_crosshair_at_point(input, *target, (255., 0., 0.).into(), thickness)?;
 
     for i in 0..faces.rows() {
 
@@ -38,35 +44,36 @@ fn visualize(input: &mut Mat, faces: &Mat, matches: &Vec<usize>, fps: f64, trail
         imgproc::rectangle(
             input,
             rect,
-            if match_id == 99 { (0., 255., 0.).into() } else { (0., 0., 255.).into() },
+            if match_id == 99 { (255., 255., 255.).into() } else { (0., 0., 255.).into() },
             thickness,
             imgproc::LINE_8,
             0)?;
 
         // Movement trail
         if match_id != 99 {
-            let trail_vec = trails[match_id as usize].to_vec();
+            let trail_vec = trails[match_id].to_vec();
             for t in 1..trail_vec.len() {
                 if trail_vec[t - 1].x == -1 || trail_vec[t].x == -1 {
                     continue;
                 }
                 line(input, trail_vec[t], trail_vec[t - 1], (0., 0., 255.).into(), thickness, LINE_8, 0)?;
             }
-        }
 
-        // info text
-        imgproc::put_text(
-            input,
-            format!("ID: {match_id}").as_str(),
-            core::Point::new(x as i32, y as i32 - 5),
-            imgproc::FONT_HERSHEY_SIMPLEX,
-            0.5,
-            if match_id == 99 { (0., 255., 0.).into() } else { (0., 0., 255.).into() },
-            thickness,
-            imgproc::LINE_8,
-            false,
-        )?;
-        j += 1;
+            // info text
+            if match_id == 99 {
+                imgproc::put_text(
+                    input,
+                    format!("ID: {match_id}").as_str(),
+                    core::Point::new(x as i32, y as i32 - 5),
+                    imgproc::FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0., 0., 255.).into(),
+                    thickness,
+                    imgproc::LINE_8,
+                    false,
+                )?;
+            }
+        }
 
         // Draw landmarks
         // visualize_draw_point(input, &faces, thickness, (255., 0., 0.).into(), i, 4)?;
@@ -74,6 +81,8 @@ fn visualize(input: &mut Mat, faces: &Mat, matches: &Vec<usize>, fps: f64, trail
         // visualize_draw_point(input, &faces, thickness, (0., 255., 0.).into(), i, 8)?;
         // visualize_draw_point(input, &faces, thickness, (255., 0., 255.).into(), i, 10)?;
         // visualize_draw_point(input, &faces, thickness, (0., 255., 255.).into(), i, 12)?;
+
+        j += 1;
     }
 
     // FPS
@@ -88,6 +97,12 @@ fn visualize(input: &mut Mat, faces: &Mat, matches: &Vec<usize>, fps: f64, trail
         imgproc::LINE_8,
         false,
     )?;
+    Ok(())
+}
+
+fn draw_crosshair_at_point(input: &mut Mat, point: Point, color: Scalar, thickness: i32) -> Result<(), Error> {
+    line(input, Point::new(point.x, 0), Point::new(point.x, input.size().unwrap().height), color, thickness, LINE_8, 0)?;
+    line(input, Point::new(0, point.y), Point::new(input.size().unwrap().width, point.y), color, thickness, LINE_8, 0)?;
     Ok(())
 }
 
@@ -120,6 +135,9 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
 
     // Visualization Trail
     let mut trails: Vec<AllocRingBuffer<Point>> = Vec::new();
+
+    // Global Target
+    let mut global_target = Point::new((cam_width / 2.) as i32, (cam_height / 3.5) as i32);
 
     // Open a GUI window
     highgui::named_window("ACamOperator", highgui::WINDOW_NORMAL)?;
@@ -295,17 +313,34 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
         fps.stop()?;
 
         // Visualize
-        visualize(&mut cam_raw, &faces, &matches, fps.get_fps()?, &trails)?;
+        visualize(&mut cam_raw, &faces, &matches, fps.get_fps()?, &trails, &global_target)?;
 
         // display in the window
         if cam_raw.rows() > 0 && cam_raw.cols() > 0 {
             highgui::imshow("ACamOperator", &cam_raw)?;
         }
 
-        // quit with "q"
+        // keyboard handle.
+        // - Q: quit
+        // - Arrows: Reposition global target
         let key = highgui::wait_key(1)?;
-        if key == 113 { // quit with q
-            break;
+        match key {
+            50 => { // Down (numpad 2)
+                global_target.y += 5;
+            }
+            56 => { // Up (numpad 8)
+                global_target.y -= 5;
+            }
+            52 => { // Left (numpad 4)
+                global_target.x -= 5;
+            }
+            54 => { // Right (numpad 6)
+                global_target.x += 5;
+            }
+            113 => { // quit with q
+                break;
+            }
+            _ => ()
         }
     }
     Ok(())
