@@ -1,6 +1,7 @@
 use anyhow::{Error, Result};
 use opencv::core::{Scalar, Size, TickMeter, Vector};
-use opencv::highgui::MouseEventTypes::EVENT_LBUTTONDOWN;
+use opencv::highgui::MouseEventTypes::{EVENT_LBUTTONDOWN, EVENT_LBUTTONUP};
+use opencv::imgproc::INTER_AREA;
 use opencv::objdetect::{FaceDetectorYN, FaceRecognizerSF, FaceRecognizerSF_DisType};
 use opencv::videoio::{CAP_PROP_FRAME_HEIGHT, CAP_PROP_FRAME_WIDTH};
 // Automatically handle the error types
@@ -107,15 +108,18 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
 
     // Webcam ID / Resolution
     let cam_id = 2;
-    let width = 1280.;
-    let height = 720.;
+    let cam_width = 1920.;
+    let cam_height = 1080.;
+    let yunet_width = 600.; // 2x 300px (yunet max res)
+    let scale = cam_width / yunet_width;
+    let yunet_height = cam_height / scale;
 
     // Open a GUI window
     highgui::named_window("ACamOperator", highgui::WINDOW_NORMAL)?;
     // Open the web-camera (assuming you have one)
     let mut cam = videoio::VideoCapture::new(cam_id, videoio::CAP_ANY)?;
-    cam.set(CAP_PROP_FRAME_WIDTH, width)?;
-    cam.set(CAP_PROP_FRAME_HEIGHT, height)?;
+    cam.set(CAP_PROP_FRAME_WIDTH, cam_width)?;
+    cam.set(CAP_PROP_FRAME_HEIGHT, cam_height)?;
 
     // mouse events
     let mut mouse_pos = Point::new(-1, -1);
@@ -142,7 +146,6 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
 
 
     //timer (for fps)
-    let mut tm = TickMeter::default()?;
     let mut fps = TickMeter::default()?;
 
     // Create the Yunet face detection and load NN weights
@@ -151,7 +154,7 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
     let mut face_detector = FaceDetectorYN::create(
         &yunet_weights_path,
         "",
-        Size::new(width as i32, height as i32),
+        Size::new(yunet_width as i32, yunet_height as i32),
         0.8f32,
         0.3f32,
         5000,
@@ -167,6 +170,8 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
     let l2norm_similar_thresh = 1.128;
 
     loop {
+        fps.reset()?;
+
         // Mouse events
         let (mouse_event, mouse_x, mouse_y, _) = {
             if should_handle_mouse_event.load(Ordering::Relaxed) {
@@ -186,6 +191,11 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
             instant_click = true;
         }
 
+        if mouse_event == EVENT_LBUTTONUP {
+            mouse_pos = Point::new(-1, -1);
+            instant_click = false;
+        }
+
         // Read the camera
         fps.start()?;
         let mut cam_raw = Mat::default();
@@ -193,11 +203,21 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
         // convert the camera format?
         // imgproc::cvt_color(&cam_raw, &mut frame, imgproc::COLOR_RGB2GRAY, 0)?;
 
+        if cam_raw.size()?.width <= 0 || cam_raw.size()?.height <= 0 {
+            continue;
+        }
+
+        // Scale image
+        let mut cam_scaled = Mat::default();
+        imgproc::resize(&cam_raw, &mut cam_scaled, Size::new(yunet_width as i32, yunet_height as i32), 0., 0., INTER_AREA)?;
 
         // Detect faces
-        let mut faces = Mat::default();
-        face_detector.detect(&cam_raw, &mut faces)?;
+        let mut faces_low_res = Mat::default();
+        face_detector.detect(&cam_scaled, &mut faces_low_res)?;
 
+        // Scale faces found to full res image coordinates
+        let mut faces = Mat::default();
+        faces_low_res.convert_to(&mut faces, -1, scale, 0.)?;
 
         // Recognize faces
         let mut matches: Vec<usize> = Vec::new();
@@ -226,7 +246,6 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
 
 
             // match
-            tm.start()?;
             let mut matched: usize = 99;
             for (j, saved_feature) in saved_faces_features.iter().enumerate() {
                 let score_cos = face_recognizer.match_(&features, &saved_feature, FaceRecognizerSF_DisType::FR_COSINE.into())?;
@@ -261,11 +280,10 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
         // Visualize
         visualize(&mut cam_raw, &faces, &matches, fps.get_fps()?, 2)?;
 
-        // reset mouse click detection
-        instant_click = false;
-
         // display in the window
-        highgui::imshow("ACamOperator", &cam_raw)?;
+        if cam_raw.rows() > 0 && cam_raw.cols() > 0 {
+            highgui::imshow("ACamOperator", &cam_raw)?;
+        }
 
         // quit with "q"
         let key = highgui::wait_key(1)?;
