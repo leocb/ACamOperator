@@ -139,7 +139,8 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
 
     // Global Target
     let mut global_target = Point::new((cam_width / 2.) as i32, (cam_height / 3.5) as i32);
-    let mut tracked_center = Point::new(0, 0);
+    let mut tracking_center = Point::new(0, 0);
+    let mut expected_match_count = 0;
 
     // Open a GUI window
     highgui::named_window("ACamOperator", highgui::WINDOW_NORMAL)?;
@@ -253,8 +254,8 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
 
         // Recognize faces
         let mut matches: Vec<usize> = Vec::new();
-        let mut matches_total = 0;
-        tracked_center = Point::new(0, 0);
+        let mut match_count = 0;
+        tracking_center = Point::new(0, 0);
         for i in 0..faces.rows() {
 
             // click inside a box
@@ -301,9 +302,9 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
                     // trail
                     trails[match_id].push(Point::new(mid_x, mid_y));
                     // track center
-                    matches_total += 1;
-                    tracked_center.x += mid_x;
-                    tracked_center.y += mid_y;
+                    match_count += 1;
+                    tracking_center.x += mid_x;
+                    tracking_center.y += mid_y;
                     break;
                 }
             }
@@ -313,6 +314,7 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
 
             // Save features if clicked (follow on next frame)
             if mouse_down && is_mouse_inside {
+                expected_match_count += 1;
                 saved_faces_features.push(features.try_clone()?);
                 let mut new_trail_buffer = AllocRingBuffer::new(30);
                 new_trail_buffer.fill(Point::new(mid_x, mid_y));
@@ -321,20 +323,29 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
             }
         }
 
-        if matches_total > 0 {
-            tracked_center.x /= matches_total;
-            tracked_center.y /= matches_total;
+        // get the center of all tracked faces
+        if match_count > 0 {
+            tracking_center.x /= match_count;
+            tracking_center.y /= match_count;
         }
 
+        // stop moving if cant find all tracked faces
+        if match_count < expected_match_count {
+            tracking_center.x = 0;
+            tracking_center.y = 0;
+        }
+
+        // count the fps until here
         fps.stop()?;
 
         // Visualize
-        visualize(&mut cam_raw, &faces, &matches, fps.get_fps()?, &trails, &global_target, &tracked_center)?;
+        visualize(&mut cam_raw, &faces, &matches, fps.get_fps()?, &trails, &global_target, &tracking_center)?;
 
         // Remove tracking if necessary
         if stop_tracking_id != 99 {
             saved_faces_features.remove(stop_tracking_id)?;
             trails.remove(stop_tracking_id);
+            expected_match_count -= 1;
         }
 
         // display in the window
@@ -367,6 +378,7 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
             99 => { // C - Clear all tracking
                 saved_faces_features.clear();
                 trails.clear();
+                expected_match_count = 0;
             }
             113 => { // Q - Quit
                 break;
