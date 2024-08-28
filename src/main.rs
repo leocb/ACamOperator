@@ -60,19 +60,17 @@ fn visualize(input: &mut Mat, faces: &Mat, matches: &Vec<usize>, fps: f64, trail
             }
 
             // info text
-            if match_id == 99 {
-                imgproc::put_text(
-                    input,
-                    format!("ID: {match_id}").as_str(),
-                    core::Point::new(x as i32, y as i32 - 5),
-                    imgproc::FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0., 0., 255.).into(),
-                    thickness,
-                    imgproc::LINE_8,
-                    false,
-                )?;
-            }
+            imgproc::put_text(
+                input,
+                format!("ID: {match_id}").as_str(),
+                core::Point::new(x as i32, y as i32 - 5),
+                imgproc::FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0., 0., 255.).into(),
+                thickness,
+                imgproc::LINE_8,
+                false,
+            )?;
         }
 
         // Draw landmarks
