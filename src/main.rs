@@ -1,5 +1,5 @@
 use anyhow::{Error, Result};
-use opencv::core::{Point, Scalar, Size, TickMeter, Vector};
+use opencv::core::{Point, Scalar, Size, TickMeter};
 use opencv::highgui::MouseEventTypes::{EVENT_LBUTTONDOWN, EVENT_LBUTTONUP};
 use opencv::imgproc::{line, INTER_AREA, LINE_8};
 use opencv::objdetect::{FaceDetectorYN, FaceRecognizerSF, FaceRecognizerSF_DisType};
@@ -194,9 +194,12 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
     let sface_weights_path = current_dir.join("models").join("sface.onnx").into_os_string().into_string().unwrap();
     let mut face_recognizer = FaceRecognizerSF::create_def(&sface_weights_path, "")?;
 
-    let mut saved_faces_features: Vector<Mat> = Vector::new();
+    let mut saved_faces_features: Vec<Mat> = Vec::new();
     let cosine_similar_thresh = 0.363;
     let l2norm_similar_thresh = 1.128;
+
+    let mut face_tracking_decay: Vec<i32> = Vec::new(); // used to clean up faces that are not seen after a while
+    let face_tracking_decay_threshold = 300; // a face is dropped from tracking after this many frames
 
     loop {
         // keep counter up to date
@@ -301,6 +304,7 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
                     match_id = j;
                     // trail
                     trails[match_id].push(Point::new(mid_x, mid_y));
+                    face_tracking_decay[match_id] = 0;
                     // track center
                     match_count += 1;
                     tracking_center.x += mid_x;
@@ -311,10 +315,10 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
 
             matches.push(match_id);
 
-
             // Save features if clicked (follow on next frame)
             if mouse_down && is_mouse_inside {
                 expected_match_count += 1;
+                face_tracking_decay.push(0);
                 saved_faces_features.push(features.try_clone()?);
                 let mut new_trail_buffer = AllocRingBuffer::new(30);
                 new_trail_buffer.fill(Point::new(mid_x, mid_y));
@@ -335,6 +339,14 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
             tracking_center.y = 0;
         }
 
+        // update face tracking decay
+        for i in 0..face_tracking_decay.len() {
+            face_tracking_decay[i] += 1;
+            if face_tracking_decay[i] > face_tracking_decay_threshold {
+                stop_tracking_id = i;
+            }
+        }
+
         // count the fps until here
         fps.stop()?;
 
@@ -343,7 +355,8 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
 
         // Remove tracking if necessary
         if stop_tracking_id != 99 {
-            saved_faces_features.remove(stop_tracking_id)?;
+            saved_faces_features.remove(stop_tracking_id);
+            face_tracking_decay.remove(stop_tracking_id);
             trails.remove(stop_tracking_id);
             expected_match_count -= 1;
         }
@@ -378,6 +391,7 @@ fn main() -> Result<()> { // Note, this is anyhow::Result
             99 => { // C - Clear all tracking
                 saved_faces_features.clear();
                 trails.clear();
+                face_tracking_decay.clear();
                 expected_match_count = 0;
             }
             113 => { // Q - Quit
